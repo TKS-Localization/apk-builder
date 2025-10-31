@@ -1,0 +1,134 @@
+name: Build and Release APK
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '45 7 * * *'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build: ${{ steps.compare_versions.outputs.needs_build }}
+      new_version: ${{ steps.get_api_version.outputs.version }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装 uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      
+      - name: 配置 uv 路径
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: 缓存 uv 的全局包
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: 安装 Python 依赖 (使用 uv)
+        run: uv pip sync pyproject.toml
+
+      - name: 获取最新的 Release Tag
+        id: get_release_tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || echo "")
+          echo "latest_tag=${latest_tag}" >> $GITHUB_OUTPUT
+
+      - name: 从 API 获取最新的应用版本
+        id: get_api_version
+        run: |
+          api_version=$(python -c "from build import get_version; print(get_version())")
+          echo "version=${api_version}" >> $GITHUB_OUTPUT
+
+      - name: 比较版本并决定是否构建
+        id: compare_versions
+        run: |
+          LATEST_TAG="${{ steps.get_release_tag.outputs.latest_tag }}"
+          API_VERSION="${{ steps.get_api_version.outputs.version }}"
+          echo "最新的 Release Tag: ${LATEST_TAG}"
+          echo "最新的 API 版本: ${API_VERSION}"
+          if [ "${LATEST_TAG}" != "${API_VERSION}" ]; then
+            echo "版本不匹配，需要构建新版本。"
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "版本已是最新，无需构建。"
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Java (JDK) 环境
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 安装 uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      
+      - name: 配置 uv 路径
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: 缓存 uv 的全局包
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: 设置 Android SDK 环境
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Android build-tools 和依赖
+        run: |
+          # 安装 Python 依赖 (使用 uv)
+          uv pip sync pyproject.toml
+          # 安装 apktool
+          sudo apt-get update && sudo apt-get install -y apktool
+          # 安装脚本中指定的 build-tools 版本
+          echo "y" | sdkmanager "build-tools;36.1.0"
+
+      - name: 运行构建脚本
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+        run: python build.py
+
+      - name: 创建 GitHub Release 并上传 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ needs.check-version.outputs.new_version }}
+        run: |
+          echo "创建版本为 ${NEW_VERSION} 的 Release..."
+          gh release create "${NEW_VERSION}" \
+            --title "Release v${NEW_VERSION}" \
+            --notes "自动构建发布新版本 ${NEW_VERSION}。" \
+            dist/*.apk
