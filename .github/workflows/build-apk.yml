@@ -49,7 +49,7 @@ jobs:
       - name: 从 API 获取最新的应用版本
         id: get_api_version
         run: |
-          api_version=$(python -c "from build import get_version; print(get_version())")
+          api_version=$(python -c "from scripts.build import get_version; print(get_version())")
           echo "version=${api_version}" >> $GITHUB_OUTPUT
 
       - name: 比较版本并决定是否构建
@@ -108,11 +108,8 @@ jobs:
 
       - name: 安装 Android build-tools 和依赖
         run: |
-          # 安装 Python 依赖 (使用 uv)
           uv pip sync --system pyproject.toml
-          # 安装 apktool
           sudo apt-get update && sudo apt-get install -y apktool
-          # 安装脚本中指定的 build-tools 版本
           echo "y" | sdkmanager "build-tools;36.1.0"
 
       - name: 运行构建脚本
@@ -120,7 +117,7 @@ jobs:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
-        run: python build.py
+        run: python scripts/build.py
 
       - name: 创建 GitHub Release 并上传 APK
         env:
