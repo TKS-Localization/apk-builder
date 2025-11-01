@@ -2,6 +2,7 @@ import glob
 import subprocess
 import shutil
 import os
+import sys
 import httpx
 import platform
 import base64
@@ -41,7 +42,7 @@ def get_version():
     if app_version:
         return app_version
 
-    print("[*] 正在获取最新游戏版本...")
+    print("[*] 正在获取最新游戏版本...", file=sys.stderr)
     try:
         with httpx.Client() as client:
             response = client.get(VERSION_API_URL, timeout=10.0)
@@ -49,15 +50,16 @@ def get_version():
             data = response.json()
 
         app_version = data["free_appinfo"]["app_version_name"]
-        print(f"[+] 最新版本: {app_version}")
+        print(f"[+] 最新版本: {app_version}", file=sys.stderr)
         return app_version
     except httpx.HTTPStatusError as e:
         print(
-            f"[!] 获取版本失败 (HTTP错误): {e.response.status_code} - {e.request.url}"
+            f"[!] 获取版本失败 (HTTP错误): {e.response.status_code} - {e.request.url}",
+            file=sys.stderr,
         )
         exit(1)
     except Exception as e:
-        print(f"[!] 获取版本失败 (其他错误): {e}")
+        print(f"[!] 获取版本失败 (其他错误): {e}", file=sys.stderr)
         exit(1)
 
 
